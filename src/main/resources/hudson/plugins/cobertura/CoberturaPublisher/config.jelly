@@ -16,7 +16,11 @@
         <f:entry title="${%Fail unhealthy builds}"
              description="${%unhealthy.fail.builds.description}" >
             <f:checkbox name="cobertura.failUnhealthy" checked="${instance.failUnhealthy}" />                                                                                        
-        </f:entry>  
+        </f:entry>
+        <f:entry title="${%Copy Health Bench Mark to Other Job}"
+             description="${%copy.health.values}" >
+            <f:checkbox name="cobertura.copyhealth" checked="${instance.copyhealth}" />                                                                                        
+        </f:entry>    
         <f:entry title="${%Fail unstable builds}"
              description="${%unstable.fail.builds.description}" >
             <f:checkbox name="cobertura.failUnstable" checked="${instance.failUnstable}" />                                                                                        

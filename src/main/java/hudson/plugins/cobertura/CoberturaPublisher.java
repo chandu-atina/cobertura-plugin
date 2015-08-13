@@ -66,6 +66,8 @@ public class CoberturaPublisher extends Recorder {
 
     private final boolean zoomCoverageChart;
     
+    private final boolean copyHealth;
+    
     private final int maxNumberOfBuilds;
     
     private boolean failNoReports = true;
@@ -85,12 +87,13 @@ public class CoberturaPublisher extends Recorder {
      * @stapler-constructor
      */
     @DataBoundConstructor
-    public CoberturaPublisher(String coberturaReportFile, boolean onlyStable, boolean failUnhealthy, boolean failUnstable, 
+    public CoberturaPublisher(String coberturaReportFile, boolean onlyStable, boolean failUnhealthy, boolean copyHealth, boolean failUnstable, 
             boolean autoUpdateHealth, boolean autoUpdateStability, boolean zoomCoverageChart, boolean failNoReports, SourceEncoding sourceEncoding,
             int maxNumberOfBuilds) {
         this.coberturaReportFile = coberturaReportFile;
         this.onlyStable = onlyStable;
         this.failUnhealthy = failUnhealthy;
+        this.copyHealth = copyHealth;
         this.failUnstable = failUnstable;
         this.autoUpdateHealth = autoUpdateHealth;
         this.autoUpdateStability = autoUpdateStability;
@@ -213,7 +216,11 @@ public class CoberturaPublisher extends Recorder {
         return failUnhealthy;
     }
 
-    /**
+    public boolean getCopyHealth() {
+		return copyHealth;
+	}
+
+	/**
      * Getter for property 'failUnstable'.
      *
      * @return Value for property 'failUnstable'.
@@ -403,7 +410,7 @@ public class CoberturaPublisher extends Recorder {
             moduleRoot.act(painter);
 
             final CoberturaBuildAction action = CoberturaBuildAction.load(build, result, healthyTarget,
-                    unhealthyTarget, getOnlyStable(), getFailUnhealthy(), getFailUnstable(), getAutoUpdateHealth(), getAutoUpdateStability());
+                    unhealthyTarget, getOnlyStable(), getFailUnhealthy(), getCopyHealth(), getFailUnstable(), getAutoUpdateHealth(), getAutoUpdateStability());
 
             build.getActions().add(action);
             Set<CoverageMetric> failingMetrics = failingTarget.getFailingMetrics(result);

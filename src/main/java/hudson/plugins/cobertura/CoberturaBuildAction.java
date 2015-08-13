@@ -40,6 +40,7 @@ public class CoberturaBuildAction implements HealthReportingAction, StaplerProxy
     private boolean failUnstable;
     private boolean autoUpdateHealth;
     private boolean autoUpdateStability;
+    private boolean copyHealth;
     /**
      * Overall coverage result.
      */
@@ -179,13 +180,15 @@ public class CoberturaBuildAction implements HealthReportingAction, StaplerProxy
     }
 
     CoberturaBuildAction(AbstractBuild<?, ?> owner, CoverageResult r, CoverageTarget healthyTarget,
-            CoverageTarget unhealthyTarget, boolean onlyStable, boolean failUnhealthy, boolean failUnstable, boolean autoUpdateHealth, boolean autoUpdateStability) {
+            CoverageTarget unhealthyTarget, boolean onlyStable, boolean failUnhealthy, boolean failUnstable, boolean autoUpdateHealth, boolean autoUpdateStability,
+            boolean copyHealth) {
         this.owner = owner;
         this.report = new WeakReference<CoverageResult>(r);
         this.healthyTarget = healthyTarget;
         this.unhealthyTarget = unhealthyTarget;
         this.onlyStable = onlyStable;
         this.failUnhealthy = failUnhealthy;
+        this.copyHealth = copyHealth;
         this.failUnstable = failUnstable;
         this.autoUpdateHealth = autoUpdateHealth;
         this.autoUpdateStability = autoUpdateStability;
@@ -228,8 +231,9 @@ public class CoberturaBuildAction implements HealthReportingAction, StaplerProxy
     private static final Logger logger = Logger.getLogger(CoberturaBuildAction.class.getName());
 
     public static CoberturaBuildAction load(AbstractBuild<?, ?> build, CoverageResult result, CoverageTarget healthyTarget,
-            CoverageTarget unhealthyTarget, boolean onlyStable, boolean failUnhealthy, boolean failUnstable, boolean autoUpdateHealth, boolean autoUpdateStability) {
-        return new CoberturaBuildAction(build, result, healthyTarget, unhealthyTarget, onlyStable, failUnhealthy, failUnstable, autoUpdateHealth, autoUpdateStability);
+            CoverageTarget unhealthyTarget, boolean onlyStable, boolean failUnhealthy, boolean failUnstable, boolean autoUpdateHealth, boolean autoUpdateStability,
+            boolean copyHealth) {
+        return new CoberturaBuildAction(build, result, healthyTarget, unhealthyTarget, onlyStable, failUnhealthy, failUnstable, autoUpdateHealth, autoUpdateStability,copyHealth);
     }
 
     /**
