@@ -608,9 +608,6 @@ public class CoberturaPublisher extends Recorder {
 			for (CoverageMetric metric : healthyMetrics) {
 				newPercent = healthyTarget.getObservedPercent(result, metric);
 				newPercent = (float) (Math.round(newPercent * 100f));
-				listener.getLogger().println(newPercent);
-				listener.getLogger().println(
-						mainJobUnhealthyMetrics.get(metric.toString()));
 				unhealthyTarget
 						.setTarget(metric, (int) (mainJobUnhealthyMetrics
 								.get(metric.toString()) * 1f));
