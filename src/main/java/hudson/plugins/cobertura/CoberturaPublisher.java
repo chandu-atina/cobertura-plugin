@@ -526,7 +526,7 @@ public class CoberturaPublisher extends Recorder {
 					String path = buildCoberturaDir.toString().substring(0,
 							buildCoberturaDir.toString().indexOf("jobs"))
 							+ "jobs/" + getNeighbourJobName() + "/config.xml";
-					setMainJobPercentages(getNeighbourJobName(), result,
+					setMainJobPercentages(path, result,
 							listener);
 				} else {
 					if (getAutoUpdateHealth()) {
@@ -594,14 +594,14 @@ public class CoberturaPublisher extends Recorder {
 	 * Updates the unhealthy or unstable percentage fields for another job
 	 * 
 	 */
-	private void setMainJobPercentages(String neighbourJobName,
+	private void setMainJobPercentages(String neighbourJobPath,
 			CoverageResult result, BuildListener listener) {
 		Set<CoverageMetric> healthyMetrics = healthyTarget
 				.getAllMetrics(result);
 		Map<String, Integer> mainJobUnhealthyMetrics = getMainJobMetrics(
-				"unhealthyTarget", listener, neighbourJobName);
+				"unhealthyTarget", listener, neighbourJobPath);
 		Map<String, Integer> mainJobFailingMetrics = getMainJobMetrics(
-				"failingTarget", listener, neighbourJobName);
+				"failingTarget", listener, neighbourJobPath);
 		float newPercent;
 		// copyJobTarget.
 		if (!healthyMetrics.isEmpty()) {
@@ -622,10 +622,10 @@ public class CoberturaPublisher extends Recorder {
 	}
 
 	public Map<String, Integer> getMainJobMetrics(String metricsNodeName,
-			BuildListener listener, String neighbourJobName) {
+			BuildListener listener, String neighbourJobPath) {
 		Map<String, Integer> jobMetrics = new HashMap<String, Integer>();
 		File fXmlFile = new File(
-				"/home/chandrasekhara/jenkins_multi/~/jenkins_multi/jobs/web crawler/config.xml");
+				neighbourJobPath);
 		DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
 
 		try {
