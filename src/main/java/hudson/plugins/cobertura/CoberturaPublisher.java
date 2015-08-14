@@ -25,14 +25,20 @@ import java.io.File;
 import java.io.FilenameFilter;
 import java.io.InputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.logging.Logger;
 
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamException;
@@ -44,6 +50,11 @@ import net.sf.json.JSONObject;
 import org.apache.commons.beanutils.ConvertUtils;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.StaplerRequest;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.xml.sax.SAXException;
 
 /**
  * Cobertura {@link Publisher}.
@@ -52,643 +63,825 @@ import org.kohsuke.stapler.StaplerRequest;
  */
 public class CoberturaPublisher extends Recorder {
 
-    private final String coberturaReportFile;
+	private final String coberturaReportFile;
 
-    private final boolean onlyStable;
+	private final boolean onlyStable;
 
-    private final boolean failUnhealthy;
+	private final boolean failUnhealthy;
 
-    private final boolean failUnstable;
+	private final boolean failUnstable;
 
-    private final boolean autoUpdateHealth;
+	private final boolean autoUpdateHealth;
 
-    private final boolean autoUpdateStability;
+	private final boolean autoUpdateStability;
 
-    private final boolean zoomCoverageChart;
-    
-    private final boolean copyHealth;
-    
-    private final int maxNumberOfBuilds;
-    
-    private boolean failNoReports = true;
+	private final boolean zoomCoverageChart;
 
-    private CoverageTarget healthyTarget;
+	private final boolean copyHealth;
 
-    private CoverageTarget unhealthyTarget;
+	private final String neighbourJobName;
 
-    private CoverageTarget failingTarget;
+	private final int maxNumberOfBuilds;
 
-    public static final CoberturaReportFilenameFilter COBERTURA_FILENAME_FILTER = new CoberturaReportFilenameFilter();
+	private boolean failNoReports = true;
 
-    private final SourceEncoding sourceEncoding;
+	private CoverageTarget healthyTarget;
 
-    /**
-     * @param coberturaReportFile the report directory
-     * @stapler-constructor
-     */
-    @DataBoundConstructor
-    public CoberturaPublisher(String coberturaReportFile, boolean onlyStable, boolean failUnhealthy, boolean copyHealth, boolean failUnstable, 
-            boolean autoUpdateHealth, boolean autoUpdateStability, boolean zoomCoverageChart, boolean failNoReports, SourceEncoding sourceEncoding,
-            int maxNumberOfBuilds) {
-        this.coberturaReportFile = coberturaReportFile;
-        this.onlyStable = onlyStable;
-        this.failUnhealthy = failUnhealthy;
-        this.copyHealth = copyHealth;
-        this.failUnstable = failUnstable;
-        this.autoUpdateHealth = autoUpdateHealth;
-        this.autoUpdateStability = autoUpdateStability;
-        this.zoomCoverageChart = zoomCoverageChart;
-        this.failNoReports = failNoReports;
-        this.sourceEncoding = sourceEncoding;
-        this.maxNumberOfBuilds = maxNumberOfBuilds;
-        this.healthyTarget = new CoverageTarget();
-        this.unhealthyTarget = new CoverageTarget();
-        this.failingTarget = new CoverageTarget();
-    }
+	private CoverageTarget unhealthyTarget;
 
-    /**
-     * Getter for property 'targets'.
-     *
-     * @return Value for property 'targets'.
-     */
-    public List<CoberturaPublisherTarget> getTargets() {
-        Map<CoverageMetric, CoberturaPublisherTarget> targets = new TreeMap<CoverageMetric, CoberturaPublisherTarget>();
-        float checker;
-        for (CoverageMetric metric : healthyTarget.getTargets()) {
-            CoberturaPublisherTarget target = targets.get(metric);
-            if (target == null) {
-                target = new CoberturaPublisherTarget();
-                target.setMetric(metric);
-            }
-            checker = (float) healthyTarget.getTarget(metric) / 100000f;
-            if (checker <= 0.001f) {
-                checker = (float) (Math.round(checker * 100000f));
-            }
-            target.setHealthy(checker);
-            targets.put(metric, target);
-        }
-        for (CoverageMetric metric : unhealthyTarget.getTargets()) {
-            CoberturaPublisherTarget target = targets.get(metric);
-            if (target == null) {
-                target = new CoberturaPublisherTarget();
-                target.setMetric(metric);
-            }
-            checker = (float) unhealthyTarget.getTarget(metric) / 100000f;
-            if (checker <= 0.001f) {
-                checker = (float) (Math.round(checker * 100000f));
-            }
-            target.setUnhealthy(checker);
-            targets.put(metric, target);
-        }
-        for (CoverageMetric metric : failingTarget.getTargets()) {
-            CoberturaPublisherTarget target = targets.get(metric);
-            if (target == null) {
-                target = new CoberturaPublisherTarget();
-                target.setMetric(metric);
-            }
-            checker = (float) failingTarget.getTarget(metric) / 100000f;
-            if (checker <= 0.001f) {
-                checker = (float) (Math.round(checker * 100000f));
-            }
-            target.setUnstable(checker);
-            targets.put(metric, target);
-        }
-        List<CoberturaPublisherTarget> result = new ArrayList<CoberturaPublisherTarget>(targets.values());
-        return result;
-    }
+	private CoverageTarget failingTarget;
 
-    /**
-     * Setter for property 'targets'.
-     *
-     * @param targets Value to set for property 'targets'.
-     */
-    private void setTargets(List<CoberturaPublisherTarget> targets) {
-        healthyTarget.clear();
-        unhealthyTarget.clear();
-        failingTarget.clear();
-        float rounded;
-        for (CoberturaPublisherTarget target : targets) {
-            if (target.getHealthy() != null) {
-                rounded = (Math.round((float) 100f * target.getHealthy()));
-                rounded = roundDecimalFloat(rounded);
-                healthyTarget.setTarget(target.getMetric(), (int) ((float) 100000f * rounded));
-            }
-            if (target.getUnhealthy() != null) {
-                rounded = (Math.round((float) 100f * target.getUnhealthy()));
-                rounded = roundDecimalFloat(rounded);
-                unhealthyTarget.setTarget(target.getMetric(), (int) ((float) 100000f * rounded));
-            }
-            if (target.getUnstable() != null) {
-                rounded = (Math.round((float) 100f * target.getUnstable()));
-                rounded = roundDecimalFloat(rounded);
-                failingTarget.setTarget(target.getMetric(), (int) ((float) 100000f * rounded));
-            }
-        }
-    }
+	public static final CoberturaReportFilenameFilter COBERTURA_FILENAME_FILTER = new CoberturaReportFilenameFilter();
 
-    /**
-     * Getter for property 'coberturaReportFile'.
-     *
-     * @return Value for property 'coberturaReportFile'.
-     */
-    public String getCoberturaReportFile() {
-        return coberturaReportFile;
-    }
+	private static final Logger logger = Logger
+			.getLogger(CoberturaPublisher.class.getName());
 
-    /**
-     * Which type of build should be considered.
-     * @return the onlyStable
-     */
-    public boolean getOnlyStable() {
-        return onlyStable;
-    }
-    
-    public int getMaxNumberOfBuilds() {
-		return maxNumberOfBuilds;
-	}
+	private final SourceEncoding sourceEncoding;
 
-    /**
-     * Getter for property 'failUnhealthy'.
-     *
-     * @return Value for property 'failUnhealthy'.
-     */
-    public boolean getFailUnhealthy() {
-        return failUnhealthy;
-    }
-
-    public boolean getCopyHealth() {
-		return copyHealth;
+	/**
+	 * @param coberturaReportFile
+	 *            the report directory
+	 * @stapler-constructor
+	 */
+	@DataBoundConstructor
+	public CoberturaPublisher(String coberturaReportFile, boolean onlyStable,
+			boolean failUnhealthy, boolean copyHealth, boolean failUnstable,
+			boolean autoUpdateHealth, boolean autoUpdateStability,
+			boolean zoomCoverageChart, boolean failNoReports,
+			SourceEncoding sourceEncoding, int maxNumberOfBuilds,
+			String neighbourJobName) {
+		this.coberturaReportFile = coberturaReportFile;
+		this.onlyStable = onlyStable;
+		this.failUnhealthy = failUnhealthy;
+		this.copyHealth = copyHealth;
+		this.neighbourJobName = neighbourJobName;
+		this.failUnstable = failUnstable;
+		this.autoUpdateHealth = autoUpdateHealth;
+		this.autoUpdateStability = autoUpdateStability;
+		this.zoomCoverageChart = zoomCoverageChart;
+		this.failNoReports = failNoReports;
+		this.sourceEncoding = sourceEncoding;
+		this.maxNumberOfBuilds = maxNumberOfBuilds;
+		this.healthyTarget = new CoverageTarget();
+		this.unhealthyTarget = new CoverageTarget();
+		this.failingTarget = new CoverageTarget();
 	}
 
 	/**
-     * Getter for property 'failUnstable'.
-     *
-     * @return Value for property 'failUnstable'.
-     */
-    public boolean getFailUnstable() {
-        return failUnstable;
-    }
+	 * Getter for property 'targets'.
+	 *
+	 * @return Value for property 'targets'.
+	 */
+	public List<CoberturaPublisherTarget> getTargets() {
+		Map<CoverageMetric, CoberturaPublisherTarget> targets = new TreeMap<CoverageMetric, CoberturaPublisherTarget>();
+		float checker;
+		for (CoverageMetric metric : healthyTarget.getTargets()) {
+			CoberturaPublisherTarget target = targets.get(metric);
+			if (target == null) {
+				target = new CoberturaPublisherTarget();
+				target.setMetric(metric);
+			}
+			checker = (float) healthyTarget.getTarget(metric) / 100000f;
+			if (checker <= 0.001f) {
+				checker = (float) (Math.round(checker * 100000f));
+			}
+			target.setHealthy(checker);
+			targets.put(metric, target);
+		}
+		for (CoverageMetric metric : unhealthyTarget.getTargets()) {
+			CoberturaPublisherTarget target = targets.get(metric);
+			if (target == null) {
+				target = new CoberturaPublisherTarget();
+				target.setMetric(metric);
+			}
+			checker = (float) unhealthyTarget.getTarget(metric) / 100000f;
+			if (checker <= 0.001f) {
+				checker = (float) (Math.round(checker * 100000f));
+			}
+			target.setUnhealthy(checker);
+			targets.put(metric, target);
+		}
+		for (CoverageMetric metric : failingTarget.getTargets()) {
+			CoberturaPublisherTarget target = targets.get(metric);
+			if (target == null) {
+				target = new CoberturaPublisherTarget();
+				target.setMetric(metric);
+			}
+			checker = (float) failingTarget.getTarget(metric) / 100000f;
+			if (checker <= 0.001f) {
+				checker = (float) (Math.round(checker * 100000f));
+			}
+			target.setUnstable(checker);
+			targets.put(metric, target);
+		}
+		List<CoberturaPublisherTarget> result = new ArrayList<CoberturaPublisherTarget>(
+				targets.values());
+		return result;
+	}
 
-    /**
-     * Getter for property 'autoUpdateHealth'.
-     *
-     * @return Value for property 'autoUpdateHealth'.
-     */
-    public boolean getAutoUpdateHealth() {
-        return autoUpdateHealth;
-    }
+	/**
+	 * Setter for property 'targets'.
+	 *
+	 * @param targets
+	 *            Value to set for property 'targets'.
+	 */
+	private void setTargets(List<CoberturaPublisherTarget> targets) {
+		// healthyTarget.clear();
+		// unhealthyTarget.clear();
+		// failingTarget.clear();
+		float rounded;
+		for (CoberturaPublisherTarget target : targets) {
+			if (target.getHealthy() != null) {
+				rounded = (Math.round((float) 100f * target.getHealthy()));
+				rounded = roundDecimalFloat(rounded);
+				healthyTarget.setTarget(target.getMetric(),
+						(int) ((float) 100000f * rounded));
+			}
+			if (target.getUnhealthy() != null) {
+				rounded = (Math.round((float) 100f * target.getUnhealthy()));
+				rounded = roundDecimalFloat(rounded);
+				unhealthyTarget.setTarget(target.getMetric(),
+						(int) ((float) 100000f * rounded));
+			}
+			if (target.getUnstable() != null) {
+				rounded = (Math.round((float) 100f * target.getUnstable()));
+				rounded = roundDecimalFloat(rounded);
+				failingTarget.setTarget(target.getMetric(),
+						(int) ((float) 100000f * rounded));
+			}
+		}
+	}
 
-    /**
-     * Getter for property 'autoUpdateStability'.
-     *
-     * @return Value for property 'autoUpdateStability'.
-     */
-    public boolean getAutoUpdateStability() {
-        return autoUpdateStability;
-    }
+	/**
+	 * Getter for property 'coberturaReportFile'.
+	 *
+	 * @return Value for property 'coberturaReportFile'.
+	 */
+	public String getCoberturaReportFile() {
+		return coberturaReportFile;
+	}
 
-    public boolean getZoomCoverageChart() {
-        return zoomCoverageChart;
-    }
+	/**
+	 * Which type of build should be considered.
+	 * 
+	 * @return the onlyStable
+	 */
+	public boolean getOnlyStable() {
+		return onlyStable;
+	}
 
-    public boolean isFailNoReports() {
-        return failNoReports;
-    }
-    
-    /**
-     * Getter for property 'healthyTarget'.
-     *
-     * @return Value for property 'healthyTarget'.
-     */
-    public CoverageTarget getHealthyTarget() {
-        return healthyTarget;
-    }
+	public int getMaxNumberOfBuilds() {
+		return maxNumberOfBuilds;
+	}
 
-    /**
-     * Setter for property 'healthyTarget'.
-     *
-     * @param healthyTarget Value to set for property 'healthyTarget'.
-     */
-    public void setHealthyTarget(CoverageTarget healthyTarget) {
-        this.healthyTarget = healthyTarget;
-    }
+	/**
+	 * Getter for property 'failUnhealthy'.
+	 *
+	 * @return Value for property 'failUnhealthy'.
+	 */
+	public boolean getFailUnhealthy() {
+		return failUnhealthy;
+	}
 
-    /**
-     * Getter for property 'unhealthyTarget'.
-     *
-     * @return Value for property 'unhealthyTarget'.
-     */
-    public CoverageTarget getUnhealthyTarget() {
-        return unhealthyTarget;
-    }
+	public boolean getCopyHealth() {
+		return copyHealth;
+	}
 
-    /**
-     * Setter for property 'unhealthyTarget'.
-     *
-     * @param unhealthyTarget Value to set for property 'unhealthyTarget'.
-     */
-    public void setUnhealthyTarget(CoverageTarget unhealthyTarget) {
-        this.unhealthyTarget = unhealthyTarget;
-    }
+	public String getNeighbourJobName() {
+		return neighbourJobName;
+	}
 
-    /**
-     * Getter for property 'failingTarget'.
-     *
-     * @return Value for property 'failingTarget'.
-     */
-    public CoverageTarget getFailingTarget() {
-        return failingTarget;
-    }
+	/**
+	 * Getter for property 'failUnstable'.
+	 *
+	 * @return Value for property 'failUnstable'.
+	 */
+	public boolean getFailUnstable() {
+		return failUnstable;
+	}
 
-    /**
-     * Setter for property 'failingTarget'.
-     *
-     * @param failingTarget Value to set for property 'failingTarget'.
-     */
-    public void setFailingTarget(CoverageTarget failingTarget) {
-        this.failingTarget = failingTarget;
-    }
+	/**
+	 * Getter for property 'autoUpdateHealth'.
+	 *
+	 * @return Value for property 'autoUpdateHealth'.
+	 */
+	public boolean getAutoUpdateHealth() {
+		return autoUpdateHealth;
+	}
 
-    /**
-     * Gets the directory where the Cobertura Report is stored for the given project.
-     */
-    /*package*/
-    static File getCoberturaReportDir(AbstractItem project) {
-        return new File(project.getRootDir(), "cobertura");
-    }
+	/**
+	 * Getter for property 'autoUpdateStability'.
+	 *
+	 * @return Value for property 'autoUpdateStability'.
+	 */
+	public boolean getAutoUpdateStability() {
+		return autoUpdateStability;
+	}
 
-    /**
-     * Gets the directory where the Cobertura Report is stored for the given project.
-     */
-    /*package*/
-    static File[] getCoberturaReports(AbstractBuild<?, ?> build) {
-        return build.getRootDir().listFiles(COBERTURA_FILENAME_FILTER);
-    }
+	public boolean getZoomCoverageChart() {
+		return zoomCoverageChart;
+	}
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public boolean perform(AbstractBuild<?, ?> build, Launcher launcher, BuildListener listener) 
-            throws InterruptedException, IOException {
-        Result threshold = onlyStable ? Result.SUCCESS : Result.UNSTABLE;
-        if (build.getResult().isWorseThan(threshold)) {
-            listener.getLogger().println("Skipping Cobertura coverage report as build was not " + threshold.toString() + " or better ...");
-            return true;
-        }
+	public boolean isFailNoReports() {
+		return failNoReports;
+	}
 
-        listener.getLogger().println("[Cobertura] Publishing Cobertura coverage report...");
-        final FilePath[] moduleRoots = build.getModuleRoots();
-        final boolean multipleModuleRoots =
-                moduleRoots != null && moduleRoots.length > 1;
-        final FilePath moduleRoot = multipleModuleRoots ? build.getWorkspace() : build.getModuleRoot();
-        final File buildCoberturaDir = build.getRootDir();
-        FilePath buildTarget = new FilePath(buildCoberturaDir);
+	/**
+	 * Getter for property 'healthyTarget'.
+	 *
+	 * @return Value for property 'healthyTarget'.
+	 */
+	public CoverageTarget getHealthyTarget() {
+		return healthyTarget;
+	}
 
-        FilePath[] reports = new FilePath[0];
-        try {
-            reports = moduleRoot.act(new ParseReportCallable(coberturaReportFile));
+	/**
+	 * Setter for property 'healthyTarget'.
+	 *
+	 * @param healthyTarget
+	 *            Value to set for property 'healthyTarget'.
+	 */
+	public void setHealthyTarget(CoverageTarget healthyTarget) {
+		this.healthyTarget = healthyTarget;
+	}
 
-            // if the build has failed, then there's not
-            // much point in reporting an error
-            if (build.getResult().isWorseOrEqualTo(Result.FAILURE) && reports.length == 0) {
-                return true;
-            }
+	/**
+	 * Getter for property 'unhealthyTarget'.
+	 *
+	 * @return Value for property 'unhealthyTarget'.
+	 */
+	public CoverageTarget getUnhealthyTarget() {
+		return unhealthyTarget;
+	}
 
-        } catch (IOException e) {
-            Util.displayIOException(e, listener);
-            e.printStackTrace(listener.fatalError("Unable to find coverage results"));
-            build.setResult(Result.FAILURE);
-        }
+	/**
+	 * Setter for property 'unhealthyTarget'.
+	 *
+	 * @param unhealthyTarget
+	 *            Value to set for property 'unhealthyTarget'.
+	 */
+	public void setUnhealthyTarget(CoverageTarget unhealthyTarget) {
+		this.unhealthyTarget = unhealthyTarget;
+	}
 
-        if (reports.length == 0) {
-            String msg = "[Cobertura] No coverage results were found using the pattern '"
-                    + coberturaReportFile + "' relative to '"
-                    + moduleRoot.getRemote() + "'."
-                    + "  Did you enter a pattern relative to the correct directory?"
-                    + "  Did you generate the XML report(s) for Cobertura?";
-            listener.getLogger().println(msg);
-            if (failNoReports) {
-                build.setResult(Result.FAILURE);
-            } else {
-                listener.getLogger().println("[Cobertura] Skipped cobertura reports.");
-            }
-            return true;
-        }
+	/**
+	 * Getter for property 'failingTarget'.
+	 *
+	 * @return Value for property 'failingTarget'.
+	 */
+	public CoverageTarget getFailingTarget() {
+		return failingTarget;
+	}
 
-        for (int i = 0; i < reports.length; i++) {
-            final FilePath targetPath = new FilePath(buildTarget, "coverage" + (i == 0 ? "" : i) + ".xml");
-            try {
-                reports[i].copyTo(targetPath);
-            } catch (IOException e) {
-                Util.displayIOException(e, listener);
-                e.printStackTrace(listener.fatalError("Unable to copy coverage from " + reports[i] + " to " + buildTarget));
-                build.setResult(Result.FAILURE);
-            }
-        }
+	/**
+	 * Setter for property 'failingTarget'.
+	 *
+	 * @param failingTarget
+	 *            Value to set for property 'failingTarget'.
+	 */
+	public void setFailingTarget(CoverageTarget failingTarget) {
+		this.failingTarget = failingTarget;
+	}
 
-        listener.getLogger().println("Publishing Cobertura coverage results...");
-        Set<String> sourcePaths = new HashSet<String>();
-        CoverageResult result = null;
-        for (File coberturaXmlReport : getCoberturaReports(build)) {
-            try {
-                result = CoberturaCoverageParser.parse(coberturaXmlReport, result, sourcePaths);
-            } catch (IOException e) {
-                Util.displayIOException(e, listener);
-                e.printStackTrace(listener.fatalError("Unable to parse " + coberturaXmlReport));
-                build.setResult(Result.FAILURE);
-            }
-        }
-        if (result != null) {
-            listener.getLogger().println("Cobertura coverage report found.");
-            result.setOwner(build);
-            final FilePath paintedSourcesPath = new FilePath(new File(build.getProject().getRootDir(), "cobertura"));
-            paintedSourcesPath.mkdirs();
-            SourceCodePainter painter = new SourceCodePainter(paintedSourcesPath, sourcePaths,
-                    result.getPaintedSources(), listener, getSourceEncoding());
+	/**
+	 * Gets the directory where the Cobertura Report is stored for the given
+	 * project.
+	 */
+	/* package */
+	static File getCoberturaReportDir(AbstractItem project) {
+		return new File(project.getRootDir(), "cobertura");
+	}
 
-            moduleRoot.act(painter);
+	/**
+	 * Gets the directory where the Cobertura Report is stored for the given
+	 * project.
+	 */
+	/* package */
+	static File[] getCoberturaReports(AbstractBuild<?, ?> build) {
+		return build.getRootDir().listFiles(COBERTURA_FILENAME_FILTER);
+	}
 
-            final CoberturaBuildAction action = CoberturaBuildAction.load(build, result, healthyTarget,
-                    unhealthyTarget, getOnlyStable(), getFailUnhealthy(), getCopyHealth(), getFailUnstable(), getAutoUpdateHealth(), getAutoUpdateStability());
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean perform(AbstractBuild<?, ?> build, Launcher launcher,
+			BuildListener listener) throws InterruptedException, IOException {
+		listener.getLogger().println(
+				"[Cobertura] Publishing Cobertura coverage report...");
+		final FilePath[] moduleRoots = build.getModuleRoots();
+		final boolean multipleModuleRoots = moduleRoots != null
+				&& moduleRoots.length > 1;
+		final FilePath moduleRoot = multipleModuleRoots ? build.getWorkspace()
+				: build.getModuleRoot();
+		final File buildCoberturaDir = build.getRootDir();
+		FilePath buildTarget = new FilePath(buildCoberturaDir);
 
-            build.getActions().add(action);
-            Set<CoverageMetric> failingMetrics = failingTarget.getFailingMetrics(result);
-            if (!failingMetrics.isEmpty()) {
-                listener.getLogger().println("Code coverage enforcement failed for the following metrics:");
-                float oldStabilityPercent;
-                float setStabilityPercent;
-                for (CoverageMetric metric : failingMetrics) {
-                    oldStabilityPercent = failingTarget.getObservedPercent(result, metric);
-                    setStabilityPercent = failingTarget.getSetPercent(result, metric);
-                    listener.getLogger().println("    " + metric.getName() + "'s stability is " + roundDecimalFloat(oldStabilityPercent * 100f) + " and set mininum stability is " + roundDecimalFloat(setStabilityPercent * 100f) + ".");
-                }
-                if (!getFailUnstable()) {
-                    listener.getLogger().println("Setting Build to unstable.");
-                    build.setResult(Result.UNSTABLE);
-                } else {
-                    listener.getLogger().println("Failing build due to unstability.");
-                    build.setResult(Result.FAILURE);
-                }
-            }
-            if (getFailUnhealthy()) {
-                Set<CoverageMetric> unhealthyMetrics = unhealthyTarget.getFailingMetrics(result);
-                if (!unhealthyMetrics.isEmpty()) {
-                    listener.getLogger().println("Unhealthy for the following metrics:");
-                    float oldHealthyPercent;
-                    float setHealthyPercent;
-                    for (CoverageMetric metric : unhealthyMetrics) {
-                        oldHealthyPercent = unhealthyTarget.getObservedPercent(result, metric);
-                        setHealthyPercent = unhealthyTarget.getSetPercent(result, metric);
-                        listener.getLogger().println("    " + metric.getName() + "'s health is " + roundDecimalFloat(oldHealthyPercent * 100f) + " and set minimum health is " + roundDecimalFloat(setHealthyPercent * 100f) + ".");
-                    }
-                    listener.getLogger().println("Failing build because it is unhealthy.");
-                    build.setResult(Result.FAILURE);
-                }
-            }
-            if (build.getResult() == Result.SUCCESS) {
-                if (getAutoUpdateHealth()) {
-                    setNewPercentages(result, true, listener);
-                }
+		FilePath[] reports = new FilePath[0];
+		try {
+			reports = moduleRoot.act(new ParseReportCallable(
+					coberturaReportFile));
 
-                if (getAutoUpdateStability()) {
-                    setNewPercentages(result, false, listener);
-                }
-            }
-        } else {
-            listener.getLogger().println("No coverage results were successfully parsed.  Did you generate "
-                    + "the XML report(s) for Cobertura?");
-            build.setResult(Result.FAILURE);
-        }
+			// if the build has failed, then there's not
+			// much point in reporting an error
+			if (build.getResult().isWorseOrEqualTo(Result.FAILURE)
+					&& reports.length == 0) {
+				return true;
+			}
 
-        return true;
-    }
+		} catch (IOException e) {
+			Util.displayIOException(e, listener);
+			e.printStackTrace(listener
+					.fatalError("Unable to find coverage results"));
+			build.setResult(Result.FAILURE);
+		}
 
-    /**
-     * Changes unhealthy or unstable percentage fields for ratcheting.
-     */
-    private void setNewPercentages(CoverageResult result, boolean select, BuildListener listener) {
-        Set<CoverageMetric> healthyMetrics = healthyTarget.getAllMetrics(result);
-        float newPercent;
-        float oldPercent;
-        if (!healthyMetrics.isEmpty()) {
-            for (CoverageMetric metric : healthyMetrics) {
-                newPercent = healthyTarget.getObservedPercent(result, metric);
-                newPercent = (float) (Math.round(newPercent * 100f));
-                if (select) {
-                    oldPercent = unhealthyTarget.getSetPercent(result, metric);
-                    oldPercent = (float) (Math.round(oldPercent * 100f));
-                } else {
-                    oldPercent = failingTarget.getSetPercent(result, metric);
-                    oldPercent = (float) (Math.round(oldPercent * 100f));
-                }
-                if (newPercent > oldPercent) {
-                    if (select) {
-                        unhealthyTarget.setTarget(metric, (int) (newPercent * 1000f));
-                        listener.getLogger().println("    " + metric.getName() + "'s new health minimum is: " + roundDecimalFloat(newPercent));
-                    } else {
-                        failingTarget.setTarget(metric, (int) (newPercent * 1000f));
-                        listener.getLogger().println("    " + metric.getName() + "'s new stability minimum is: " + roundDecimalFloat(newPercent));
-                    }
-                }
-            }
-        }
-    }
+		if (reports.length == 0) {
+			String msg = "[Cobertura] No coverage results were found using the pattern '"
+					+ coberturaReportFile
+					+ "' relative to '"
+					+ moduleRoot.getRemote()
+					+ "'."
+					+ "  Did you enter a pattern relative to the correct directory?"
+					+ "  Did you generate the XML report(s) for Cobertura?";
+			listener.getLogger().println(msg);
+			if (failNoReports) {
+				build.setResult(Result.FAILURE);
+			} else {
+				listener.getLogger().println(
+						"[Cobertura] Skipped cobertura reports.");
+			}
+			return true;
+		}
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public Action getProjectAction(AbstractProject<?, ?> project) {
-        return new CoberturaProjectAction(project, getOnlyStable());
-    }
+		for (int i = 0; i < reports.length; i++) {
+			final FilePath targetPath = new FilePath(buildTarget, "coverage"
+					+ (i == 0 ? "" : i) + ".xml");
+			try {
+				reports[i].copyTo(targetPath);
+			} catch (IOException e) {
+				Util.displayIOException(e, listener);
+				e.printStackTrace(listener
+						.fatalError("Unable to copy coverage from "
+								+ reports[i] + " to " + buildTarget));
+				build.setResult(Result.FAILURE);
+			}
+		}
 
-    /**
-     * {@inheritDoc}
-     */
-    public BuildStepMonitor getRequiredMonitorService() {
-        return BuildStepMonitor.BUILD;
-    }
+		listener.getLogger()
+				.println("Publishing Cobertura coverage results...");
+		Set<String> sourcePaths = new HashSet<String>();
+		CoverageResult result = null;
+		for (File coberturaXmlReport : getCoberturaReports(build)) {
+			try {
+				result = CoberturaCoverageParser.parse(coberturaXmlReport,
+						result, sourcePaths);
+			} catch (IOException e) {
+				Util.displayIOException(e, listener);
+				e.printStackTrace(listener.fatalError("Unable to parse "
+						+ coberturaXmlReport));
+				build.setResult(Result.FAILURE);
+			}
+		}
+		if (result != null) {
+			listener.getLogger().println("Cobertura coverage report found.");
+			result.setOwner(build);
+			final FilePath paintedSourcesPath = new FilePath(new File(build
+					.getProject().getRootDir(), "cobertura"));
+			paintedSourcesPath.mkdirs();
+			SourceCodePainter painter = new SourceCodePainter(
+					paintedSourcesPath, sourcePaths,
+					result.getPaintedSources(), listener, getSourceEncoding());
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public BuildStepDescriptor<Publisher> getDescriptor() {
-        // see Descriptor javadoc for more about what a descriptor is.
-        return DESCRIPTOR;
-    }
+			moduleRoot.act(painter);
+			final CoberturaBuildAction action = CoberturaBuildAction.load(
+					build, result, healthyTarget, unhealthyTarget,
+					getOnlyStable(), getFailUnhealthy(), getCopyHealth(),
+					getFailUnstable(), getAutoUpdateHealth(),
+					getAutoUpdateStability(), getNeighbourJobName());
 
-    public SourceEncoding getSourceEncoding() {
-        return sourceEncoding;
-    }
+			build.getActions().add(action);
+			Set<CoverageMetric> failingMetrics = failingTarget
+					.getFailingMetrics(result);
+			if (!failingMetrics.isEmpty()) {
+				listener.getLogger()
+						.println(
+								"Code coverage enforcement failed for the following metrics:");
+				float oldStabilityPercent;
+				float setStabilityPercent;
+				for (CoverageMetric metric : failingMetrics) {
+					oldStabilityPercent = failingTarget.getObservedPercent(
+							result, metric);
+					setStabilityPercent = failingTarget.getSetPercent(result,
+							metric);
+					listener.getLogger()
+							.println(
+									"    "
+											+ metric.getName()
+											+ "'s stability is "
+											+ roundDecimalFloat(oldStabilityPercent * 100f)
+											+ " and set mininum stability is "
+											+ roundDecimalFloat(setStabilityPercent * 100f)
+											+ ".");
+				}
+				if (!getFailUnstable()) {
+					listener.getLogger().println("Setting Build to unstable.");
+					build.setResult(Result.UNSTABLE);
+				} else {
+					listener.getLogger().println(
+							"Failing build due to unstability.");
+					build.setResult(Result.FAILURE);
+				}
+			}
+			if (getFailUnhealthy()) {
+				Set<CoverageMetric> unhealthyMetrics = unhealthyTarget
+						.getFailingMetrics(result);
+				if (!unhealthyMetrics.isEmpty()) {
+					listener.getLogger().println(
+							"Unhealthy for the following metrics:");
+					float oldHealthyPercent;
+					float setHealthyPercent;
+					for (CoverageMetric metric : unhealthyMetrics) {
+						oldHealthyPercent = unhealthyTarget.getObservedPercent(
+								result, metric);
+						setHealthyPercent = unhealthyTarget.getSetPercent(
+								result, metric);
+						listener.getLogger()
+								.println(
+										"    "
+												+ metric.getName()
+												+ "'s health is "
+												+ roundDecimalFloat(oldHealthyPercent * 100f)
+												+ " and set minimum health is "
+												+ roundDecimalFloat(setHealthyPercent * 100f)
+												+ ".");
+					}
+					listener.getLogger().println(
+							"Failing build because it is unhealthy.");
+					build.setResult(Result.FAILURE);
+				}
+			}
+			if (build.getResult() == Result.SUCCESS) {
+				if (getCopyHealth()) {
+					String path = buildCoberturaDir.toString().substring(0,
+							buildCoberturaDir.toString().indexOf("jobs"))
+							+ "jobs/" + getNeighbourJobName() + "/config.xml";
+					setMainJobPercentages(getNeighbourJobName(), result,
+							listener);
+				} else {
+					if (getAutoUpdateHealth()) {
+						setNewPercentages(result, true, listener);
+					}
 
-    /**
-     * Descriptor should be singleton.
-     */
-    @Extension
-    public static final DescriptorImpl DESCRIPTOR = new DescriptorImpl();
+					if (getAutoUpdateStability()) {
+						setNewPercentages(result, false, listener);
+					}
+				}
+			}
+		} else {
+			listener.getLogger().println(
+					"No coverage results were successfully parsed.  Did you generate "
+							+ "the XML report(s) for Cobertura?");
+			build.setResult(Result.FAILURE);
+		}
 
-    public static class ParseReportCallable implements FilePath.FileCallable<FilePath[]> {
+		return true;
+	}
 
-        private static final long serialVersionUID = 1L;
+	/**
+	 * Changes unhealthy or unstable percentage fields for ratcheting.
+	 */
+	private void setNewPercentages(CoverageResult result, boolean select,
+			BuildListener listener) {
+		Set<CoverageMetric> healthyMetrics = healthyTarget
+				.getAllMetrics(result);
+		float newPercent;
+		float oldPercent;
+		// copyJobTarget.
+		if (!healthyMetrics.isEmpty()) {
+			for (CoverageMetric metric : healthyMetrics) {
+				newPercent = healthyTarget.getObservedPercent(result, metric);
+				newPercent = (float) (Math.round(newPercent * 100f));
+				if (select) {
+					oldPercent = unhealthyTarget.getSetPercent(result, metric);
+					oldPercent = (float) (Math.round(oldPercent * 100f));
+				} else {
+					oldPercent = failingTarget.getSetPercent(result, metric);
+					oldPercent = (float) (Math.round(oldPercent * 100f));
+				}
+				if (newPercent > oldPercent) {
+					if (select) {
+						unhealthyTarget.setTarget(metric,
+								(int) (newPercent * 1000f));
+						listener.getLogger().println(
+								"    " + metric.getName()
+										+ "'s new health minimum is: "
+										+ roundDecimalFloat(newPercent));
+					} else {
+						failingTarget.setTarget(metric,
+								(int) (newPercent * 1000f));
+						listener.getLogger().println(
+								"    " + metric.getName()
+										+ "'s new stability minimum is: "
+										+ roundDecimalFloat(newPercent));
+					}
+				}
+			}
+		}
+	}
 
-        private final String reportFilePath;
+	/**
+	 * Updates the unhealthy or unstable percentage fields for another job
+	 * 
+	 */
+	private void setMainJobPercentages(String neighbourJobName,
+			CoverageResult result, BuildListener listener) {
+		Set<CoverageMetric> healthyMetrics = healthyTarget
+				.getAllMetrics(result);
+		Map<String, Integer> mainJobUnhealthyMetrics = getMainJobMetrics(
+				"unhealthyTarget", listener, neighbourJobName);
+		Map<String, Integer> mainJobFailingMetrics = getMainJobMetrics(
+				"failingTarget", listener, neighbourJobName);
+		float newPercent;
+		// copyJobTarget.
+		if (!healthyMetrics.isEmpty()) {
+			for (CoverageMetric metric : healthyMetrics) {
+				newPercent = healthyTarget.getObservedPercent(result, metric);
+				newPercent = (float) (Math.round(newPercent * 100f));
+				listener.getLogger().println(newPercent);
+				listener.getLogger().println(
+						mainJobUnhealthyMetrics.get(metric.toString()));
+				unhealthyTarget
+						.setTarget(metric, (int) (mainJobUnhealthyMetrics
+								.get(metric.toString()) * 1f));
+				failingTarget
+						.setTarget(metric, (int) (mainJobFailingMetrics
+								.get(metric.toString()) * 1f));
+			}
+		}
+	}
 
-        public ParseReportCallable(String reportFilePath) {
-            this.reportFilePath = reportFilePath;
-        }
+	public Map<String, Integer> getMainJobMetrics(String metricsNodeName,
+			BuildListener listener, String neighbourJobName) {
+		Map<String, Integer> jobMetrics = new HashMap<String, Integer>();
+		File fXmlFile = new File(
+				"/home/chandrasekhara/jenkins_multi/~/jenkins_multi/jobs/web crawler/config.xml");
+		DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
 
-        public FilePath[] invoke(File f, VirtualChannel channel) throws IOException, InterruptedException {
-            FilePath[] r = new FilePath(f).list(reportFilePath);
+		try {
+			DocumentBuilder dBuilder = dbFactory.newDocumentBuilder();
+			Document doc = dBuilder.parse(fXmlFile);
+			doc.getDocumentElement().normalize();
+			Element node = (Element) doc.getElementsByTagName(metricsNodeName)
+					.item(0);
+			NodeList nlist = node.getElementsByTagName("entry");
+			for (int temp = 0; temp < nlist.getLength(); temp++) {
+				Node nNode = nlist.item(temp);
+				if (nNode.getNodeType() == Node.ELEMENT_NODE) {
 
-            XMLInputFactory factory = XMLInputFactory.newInstance();
-            factory.setProperty("javax.xml.stream.supportDTD", false);
+					Element eElement = (Element) nNode;
+					jobMetrics
+							.put(eElement
+									.getElementsByTagName(
+											"hudson.plugins.cobertura.targets.CoverageMetric")
+									.item(0).getTextContent(),
+									Integer.parseInt(eElement
+											.getElementsByTagName("int")
+											.item(0).getTextContent()));
+				}
+			}
 
-            for (FilePath filePath : r) {
-                InputStream is = null;
-                XMLEventReader reader = null;
-                try {
-                    is = filePath.read();
-                    reader = factory.createXMLEventReader(is);
-                    while (reader.hasNext()) {
-                        XMLEvent event = reader.nextEvent();
-                        if (event.isStartElement()) {
-                            StartElement start = (StartElement) event;
-                            if (start.getName().getLocalPart().equals("coverage")) {
-                                // This is a cobertura coverage report file
-                                break;
-                            } else {
-                                throw new IOException(filePath + " is not a cobertura coverage report, please check your report pattern");
-                            }
-                        }
-                    }
-                } catch (XMLStreamException e) {
-                    throw new IOException(filePath + " is not an XML file, please check your report pattern");
-                } finally {
-                    try {
-                        if (reader != null) {
-                            try {
-                                reader.close();
-                            } catch (XMLStreamException ex) {
-                                //
-                            }                            
-                        }
-                    } finally {
-                        IOUtils.closeQuietly(is);
-                    }
-                }
+		} catch (SAXException e) {
+			// Util.displayIOException(e, listener);
+			e.printStackTrace(listener
+					.fatalError("Unable to parse main job file"));
 
-            }
-            return r;
-        }
-    }
+		} catch (IOException e1) {
+			Util.displayIOException(e1, listener);
+			e1.printStackTrace(listener
+					.fatalError("Unable to parse main job file"));
+			// build.setResult(Result.FAILURE);
 
-    /**
-     * Descriptor for {@link CoberturaPublisher}. Used as a singleton. The class is marked as public so that it can be
-     * accessed from views.
-     * <p/>
-     * <p/>
-     * See <tt>views/hudson/plugins/cobertura/CoberturaPublisher/*.jelly</tt> for the actual HTML fragment for the
-     * configuration screen.
-     */
-    public static final class DescriptorImpl extends BuildStepDescriptor<Publisher> {
+		} catch (ParserConfigurationException e2) {
+			e2.printStackTrace(listener
+					.fatalError("Unable to parse main job file"));
+		}
+		return jobMetrics;
+	}
 
-        CoverageMetric[] metrics = {
-            CoverageMetric.PACKAGES,
-            CoverageMetric.FILES,
-            CoverageMetric.CLASSES,
-            CoverageMetric.METHOD,
-            CoverageMetric.LINE,
-            CoverageMetric.CONDITIONAL,};
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public Action getProjectAction(AbstractProject<?, ?> project) {
+		return new CoberturaProjectAction(project, getOnlyStable());
+	}
 
-        /**
-         * Constructs a new DescriptorImpl.
-         */
-        DescriptorImpl() {
-            super(CoberturaPublisher.class);
-        }
+	/**
+	 * {@inheritDoc}
+	 */
+	public BuildStepMonitor getRequiredMonitorService() {
+		return BuildStepMonitor.BUILD;
+	}
 
-        /**
-         * This human readable name is used in the configuration screen.
-         */
-        public String getDisplayName() {
-            return Messages.CoberturaPublisher_displayName();
-        }
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public BuildStepDescriptor<Publisher> getDescriptor() {
+		// see Descriptor javadoc for more about what a descriptor is.
+		return DESCRIPTOR;
+	}
 
-        /**
-         * Getter for property 'metrics'.
-         *
-         * @return Value for property 'metrics'.
-         */
-        public List<CoverageMetric> getMetrics() {
-            return Arrays.asList(metrics);
-        }
+	public SourceEncoding getSourceEncoding() {
+		return sourceEncoding;
+	}
 
-        /**
-         * Getter for property 'defaultTargets'.
-         *
-         * @return Value for property 'defaultTargets'.
-         */
-        public List<CoberturaPublisherTarget> getDefaultTargets() {
-            List<CoberturaPublisherTarget> result = new ArrayList<CoberturaPublisherTarget>();
-            result.add(new CoberturaPublisherTarget(CoverageMetric.METHOD, 80f, null, null));
-            result.add(new CoberturaPublisherTarget(CoverageMetric.LINE, 80f, null, null));
-            result.add(new CoberturaPublisherTarget(CoverageMetric.CONDITIONAL, 70f, null, null));
-            return result;
-        }
+	/**
+	 * Descriptor should be singleton.
+	 */
+	@Extension
+	public static final DescriptorImpl DESCRIPTOR = new DescriptorImpl();
 
-        public List<CoberturaPublisherTarget> getTargets(CoberturaPublisher instance) {
-            if (instance == null) {
-                return getDefaultTargets();
-            }
-            return instance.getTargets();
-        }
+	public static class ParseReportCallable implements
+			FilePath.FileCallable<FilePath[]> {
 
-        /**
-         * {@inheritDoc}
-         */
-        @Override
-        public boolean configure(StaplerRequest req, JSONObject formData) throws FormException {
-            req.bindParameters(this, "cobertura.");
-            save();
-            return super.configure(req, formData);
-        }
+		private static final long serialVersionUID = 1L;
 
-        /**
-         * Creates a new instance of {@link CoberturaPublisher} from a submitted form.
-         */
-        @Override
-        public CoberturaPublisher newInstance(StaplerRequest req, JSONObject formData) throws FormException {
-            CoberturaPublisher instance = req.bindJSON(CoberturaPublisher.class, formData);
-            ConvertUtils.register(CoberturaPublisherTarget.CONVERTER, CoverageMetric.class);
-            List<CoberturaPublisherTarget> targets = req
-                    .bindParametersToList(CoberturaPublisherTarget.class, "cobertura.target.");
-            instance.setTargets(targets);
-            return instance;
-        }
+		private final String reportFilePath;
 
-        @SuppressWarnings("unchecked")
-        @Override
-        public boolean isApplicable(Class<? extends AbstractProject> jobType) {
-            return true;
-        }
-    }
+		public ParseReportCallable(String reportFilePath) {
+			this.reportFilePath = reportFilePath;
+		}
 
-    private static class CoberturaReportFilenameFilter implements FilenameFilter {
+		public FilePath[] invoke(File f, VirtualChannel channel)
+				throws IOException, InterruptedException {
+			FilePath[] r = new FilePath(f).list(reportFilePath);
 
-        /**
-         * {@inheritDoc}
-         */
-        public boolean accept(File dir, String name) {
-            // TODO take this out of an anonymous inner class, create a singleton and use a Regex to match the name
-            return name.startsWith("coverage") && name.endsWith(".xml");
-        }
-    }
+			XMLInputFactory factory = XMLInputFactory.newInstance();
+			factory.setProperty("javax.xml.stream.supportDTD", false);
 
-    public float roundDecimalFloat(Float input) {
-        float rounded = (float) Math.round(input);
-        rounded = rounded / 100f;
-        return rounded;
-    }
+			for (FilePath filePath : r) {
+				InputStream is = null;
+				XMLEventReader reader = null;
+				try {
+					is = filePath.read();
+					reader = factory.createXMLEventReader(is);
+					while (reader.hasNext()) {
+						XMLEvent event = reader.nextEvent();
+						if (event.isStartElement()) {
+							StartElement start = (StartElement) event;
+							if (start.getName().getLocalPart()
+									.equals("coverage")) {
+								// This is a cobertura coverage report file
+								break;
+							} else {
+								throw new IOException(
+										filePath
+												+ " is not a cobertura coverage report, please check your report pattern");
+							}
+						}
+					}
+				} catch (XMLStreamException e) {
+					throw new IOException(
+							filePath
+									+ " is not an XML file, please check your report pattern");
+				} finally {
+					try {
+						if (reader != null) {
+							try {
+								reader.close();
+							} catch (XMLStreamException ex) {
+								//
+							}
+						}
+					} finally {
+						IOUtils.closeQuietly(is);
+					}
+				}
+
+			}
+			return r;
+		}
+	}
+
+	/**
+	 * Descriptor for {@link CoberturaPublisher}. Used as a singleton. The class
+	 * is marked as public so that it can be accessed from views.
+	 * <p/>
+	 * <p/>
+	 * See <tt>views/hudson/plugins/cobertura/CoberturaPublisher/*.jelly</tt>
+	 * for the actual HTML fragment for the configuration screen.
+	 */
+	public static final class DescriptorImpl extends
+			BuildStepDescriptor<Publisher> {
+
+		CoverageMetric[] metrics = { CoverageMetric.PACKAGES,
+				CoverageMetric.FILES, CoverageMetric.CLASSES,
+				CoverageMetric.METHOD, CoverageMetric.LINE,
+				CoverageMetric.CONDITIONAL, };
+
+		/**
+		 * Constructs a new DescriptorImpl.
+		 */
+		DescriptorImpl() {
+			super(CoberturaPublisher.class);
+		}
+
+		/**
+		 * This human readable name is used in the configuration screen.
+		 */
+		public String getDisplayName() {
+			return Messages.CoberturaPublisher_displayName();
+		}
+
+		/**
+		 * Getter for property 'metrics'.
+		 *
+		 * @return Value for property 'metrics'.
+		 */
+		public List<CoverageMetric> getMetrics() {
+			return Arrays.asList(metrics);
+		}
+
+		/**
+		 * Getter for property 'defaultTargets'.
+		 *
+		 * @return Value for property 'defaultTargets'.
+		 */
+		public List<CoberturaPublisherTarget> getDefaultTargets() {
+			List<CoberturaPublisherTarget> result = new ArrayList<CoberturaPublisherTarget>();
+			result.add(new CoberturaPublisherTarget(CoverageMetric.METHOD, 80f,
+					null, null));
+			result.add(new CoberturaPublisherTarget(CoverageMetric.LINE, 80f,
+					null, null));
+			result.add(new CoberturaPublisherTarget(CoverageMetric.CONDITIONAL,
+					70f, null, null));
+			return result;
+		}
+
+		public List<CoberturaPublisherTarget> getTargets(
+				CoberturaPublisher instance) {
+			if (instance == null) {
+				return getDefaultTargets();
+			}
+			return instance.getTargets();
+		}
+
+		/**
+		 * {@inheritDoc}
+		 */
+		@Override
+		public boolean configure(StaplerRequest req, JSONObject formData)
+				throws FormException {
+			req.bindParameters(this, "cobertura.");
+			save();
+			return super.configure(req, formData);
+		}
+
+		/**
+		 * Creates a new instance of {@link CoberturaPublisher} from a submitted
+		 * form.
+		 */
+		@Override
+		public CoberturaPublisher newInstance(StaplerRequest req,
+				JSONObject formData) throws FormException {
+			CoberturaPublisher instance = req.bindJSON(
+					CoberturaPublisher.class, formData);
+			ConvertUtils.register(CoberturaPublisherTarget.CONVERTER,
+					CoverageMetric.class);
+			logger.info(req.toString());
+
+			List<CoberturaPublisherTarget> targets = req.bindParametersToList(
+					CoberturaPublisherTarget.class, "cobertura.target.");
+			System.out.println();
+			instance.setTargets(targets);
+			return instance;
+		}
+
+		@SuppressWarnings("unchecked")
+		@Override
+		public boolean isApplicable(Class<? extends AbstractProject> jobType) {
+			return true;
+		}
+	}
+
+	private static class CoberturaReportFilenameFilter implements
+			FilenameFilter {
+
+		/**
+		 * {@inheritDoc}
+		 */
+		public boolean accept(File dir, String name) {
+			// TODO take this out of an anonymous inner class, create a
+			// singleton and use a Regex to match the name
+			return name.startsWith("coverage") && name.endsWith(".xml");
+		}
+	}
+
+	public float roundDecimalFloat(Float input) {
+		float rounded = (float) Math.round(input);
+		rounded = rounded / 100f;
+		return rounded;
+	}
 }

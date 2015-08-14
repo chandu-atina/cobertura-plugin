@@ -18,15 +18,25 @@ import java.util.logging.Logger;
  * @author connollys
  * @since 18-Dec-2007 11:11:23
  */
-public class MavenCoberturaBuildAction extends CoberturaBuildAction implements AggregatableAction {
-    @SuppressWarnings("unused")
-    private static final Logger LOGGER = Logger.getLogger(MavenCoberturaBuildAction.class.getName());
+public class MavenCoberturaBuildAction extends CoberturaBuildAction implements
+		AggregatableAction {
+	@SuppressWarnings("unused")
+	private static final Logger LOGGER = Logger
+			.getLogger(MavenCoberturaBuildAction.class.getName());
 
-    MavenCoberturaBuildAction(MavenBuild build, CoverageResult r, CoverageTarget healthyTarget, CoverageTarget unhealthyTarget, boolean onlyStable, boolean failUnhealthy, boolean failUnstable, boolean autoUpdateHealth, boolean autoUpdateStability,boolean copyHealth) {
-        super(build, r, healthyTarget, unhealthyTarget, onlyStable, failUnhealthy, failUnstable, autoUpdateHealth, autoUpdateStability,copyHealth);
-    }
+	MavenCoberturaBuildAction(MavenBuild build, CoverageResult r,
+			CoverageTarget healthyTarget, CoverageTarget unhealthyTarget,
+			boolean onlyStable, boolean failUnhealthy, boolean failUnstable,
+			boolean autoUpdateHealth, boolean autoUpdateStability,
+			boolean copyHealth, String neighbourJobName) {
+		super(build, r, healthyTarget, unhealthyTarget, onlyStable,
+				failUnhealthy, failUnstable, autoUpdateHealth,
+				autoUpdateStability, copyHealth, neighbourJobName);
+	}
 
-    public MavenAggregatedReport createAggregatedAction(MavenModuleSetBuild build, Map<MavenModule, List<MavenBuild>> moduleBuilds) {
-        return new MavenCoberturaAggregatedReport(build);
-    }
+	public MavenAggregatedReport createAggregatedAction(
+			MavenModuleSetBuild build,
+			Map<MavenModule, List<MavenBuild>> moduleBuilds) {
+		return new MavenCoberturaAggregatedReport(build);
+	}
 }
