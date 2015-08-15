@@ -600,20 +600,30 @@ public class CoberturaPublisher extends Recorder {
 				.getAllMetrics(result);
 		Map<String, Integer> mainJobUnhealthyMetrics = getMainJobMetrics(
 				"unhealthyTarget", listener, neighbourJobPath);
+		if (mainJobUnhealthyMetrics == null) {
+			return;
+		}
 		Map<String, Integer> mainJobFailingMetrics = getMainJobMetrics(
 				"failingTarget", listener, neighbourJobPath);
+		if (mainJobFailingMetrics == null) {
+			return;
+		}
 		float newPercent;
 		// copyJobTarget.
 		if (!healthyMetrics.isEmpty()) {
 			for (CoverageMetric metric : healthyMetrics) {
 				newPercent = healthyTarget.getObservedPercent(result, metric);
 				newPercent = (float) (Math.round(newPercent * 100f));
-				unhealthyTarget
-						.setTarget(metric, (int) (mainJobUnhealthyMetrics
-								.get(metric.toString()) * 1f));
-				failingTarget
-						.setTarget(metric, (int) (mainJobFailingMetrics
-								.get(metric.toString()) * 1f));
+				Integer healthMetricsValue = mainJobUnhealthyMetrics.get(metric
+						.toString());
+				Integer stabilityMetricsValue = mainJobFailingMetrics
+						.get(metric.toString());
+				unhealthyTarget.setTarget(metric,
+						(int) (healthMetricsValue == null ? 0
+								: (healthMetricsValue * 1f)));
+				failingTarget.setTarget(metric,
+						(int) (stabilityMetricsValue == null ? 0
+								: (stabilityMetricsValue * 1f)));
 			}
 		}
 	}
@@ -621,8 +631,17 @@ public class CoberturaPublisher extends Recorder {
 	public Map<String, Integer> getMainJobMetrics(String metricsNodeName,
 			BuildListener listener, String neighbourJobPath) {
 		Map<String, Integer> jobMetrics = new HashMap<String, Integer>();
-		File fXmlFile = new File(
-				neighbourJobPath);
+		File fXmlFile = new File(neighbourJobPath);
+		if (!fXmlFile.exists()) {
+			listener.getLogger()
+					.println(
+							"Job Name : "
+									+ getNeighbourJobName()
+									+ " !! No such job exists to copy health metrics values.");
+			listener.getLogger().println("Health Metrics are not updated !!");
+
+			return null;
+		}
 		DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
 
 		try {
